@@ -1,3 +1,4 @@
+# See LICENSE for license details.
 # Runner for xsim
 
 .PHONY: tb_Frontend clean

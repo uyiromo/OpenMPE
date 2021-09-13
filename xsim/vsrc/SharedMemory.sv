@@ -1,3 +1,4 @@
+// See LICENSE for license details.
 module SharedMemory();
 /* -----\/----- EXCLUDED -----\/-----
    logic [511:0]        memory[logic[31:0]];

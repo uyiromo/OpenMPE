@@ -1,3 +1,4 @@
+// See LICENSE for license details.
 module AXI4BusMaster
  #(
    parameter IDBITS = 4,

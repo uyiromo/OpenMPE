@@ -1,3 +1,4 @@
+// See LICENSE for license details.
 `timescale 1ns/1ps
 
 module tb_CWMACOpt();

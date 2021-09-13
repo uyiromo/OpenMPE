@@ -1,3 +1,4 @@
+// See LICENSE for license details.
 `define TREE(N)                                   \
     logic         io_tree_##N##_master_ready;     \
     logic         io_tree_##N##_master_valid;     \

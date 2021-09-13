@@ -4,7 +4,7 @@ ThisBuild / scalaVersion     := "2.12.10"
 ThisBuild / version          := "1.2-SNAPSHOT"
 ThisBuild / organization     := "com.github.uyiromo"
 
-lazy val openmpe = (project in file("."))
+lazy val nvsit = (project in file("."))
   .settings(
     name := "OpenMPE",
     libraryDependencies ++= Seq(
