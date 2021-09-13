@@ -1,5 +1,5 @@
 // See LICENSE for license details.
-package nvsit
+package openmpe
 
 import scala.math.pow
 

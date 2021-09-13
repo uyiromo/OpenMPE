@@ -1,5 +1,5 @@
 // See LICENSE for license details.
-package nvsit
+package openmpe
 
 import chisel3._
 import chisel3.util._

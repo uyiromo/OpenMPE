@@ -4,9 +4,9 @@ ThisBuild / scalaVersion     := "2.12.10"
 ThisBuild / version          := "1.2-SNAPSHOT"
 ThisBuild / organization     := "com.github.uyiromo"
 
-lazy val nvsit = (project in file("."))
+lazy val openmpe = (project in file("."))
   .settings(
-    name := "NVSIT",
+    name := "OpenMPE",
     libraryDependencies ++= Seq(
       "edu.berkeley.cs" %% "chisel3" % "3.4.3",
       "edu.berkeley.cs" %% "chiseltest" % "0.3.3" % "test",

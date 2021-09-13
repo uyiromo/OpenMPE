@@ -19,16 +19,16 @@ build.sbt:
 	ln -sf ${ROOT_DIR}/build.sbt.bak ${ROOT_DIR}/build.sbt
 
 AES128Opt.v: build.sbt ${AES_SCALA}
-	java -jar ../rocket-chip/sbt-launch.jar "runMain nvsit.AES128OptDriver"
+	java -jar ../rocket-chip/sbt-launch.jar "runMain openmpe.AES128OptDriver"
 
 CWMACOpt.v: build.sbt ${CWMAC_SCALA}
-	java -jar ../rocket-chip/sbt-launch.jar "runMain nvsit.CWMACOptDriver"
+	java -jar ../rocket-chip/sbt-launch.jar "runMain openmpe.CWMACOptDriver"
 
 Tree.v: build.sbt ${TREE_SCALA}
-	java -jar ../rocket-chip/sbt-launch.jar "runMain nvsit.TreeDriver"
+	java -jar ../rocket-chip/sbt-launch.jar "runMain openmpe.TreeDriver"
 
 MPE.v: build.sbt ${MPE_SCALA}
-	java -jar ../rocket-chip/sbt-launch.jar "runMain nvsit.MPEDriver"
+	java -jar ../rocket-chip/sbt-launch.jar "runMain openmpe.MPEDriver"
 
 clean:
 	rm -rf *.fir *.anno.json *.f *.v *.log project target
