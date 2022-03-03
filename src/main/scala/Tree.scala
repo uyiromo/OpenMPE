@@ -37,14 +37,15 @@ class Tree extends MultiIOModule {
   val debug = !true.B
 
   // Constants
-  val n_init  = WireDefault("x1".U(56.W))                       // multiplicative unit
-  val base_pm = WireDefault(AddressMap.PM_BEGIN)
-  val base_pd = WireDefault(AddressMap.PM_BEGIN + 0x0180000L.U) // base + 0x06000000.U
-  val base_cr = WireDefault(AddressMap.PM_BEGIN + 0x01B0000L.U) // base + 0x06C00000.U
-  val base_l0 = WireDefault(AddressMap.PM_BEGIN + 0x01F8000L.U) // base + 0x07E00000.U
-  val base_l1 = WireDefault(AddressMap.PM_BEGIN + 0x01FF000L.U) // base + 0x07FC0000.U
-  val base_l2 = WireDefault(AddressMap.PM_BEGIN + 0x01FFE00L.U) // base + 0x07FF8000.U
-  val base_l3 = WireDefault(AddressMap.PM_BEGIN + 0x01FFFC0L.U) // base + 0x07FFF000.U  // on-die
+  val n_init   = "x1".U(56.W)                       // multiplicative unit
+  val uninitCL = Cat(0.U(8.W), 0.U(56.W), n_init, n_init, n_init, n_init, n_init, n_init, n_init, n_init)
+  val base_pm  = WireDefault(AddressMap.PM_BEGIN)
+  val base_pd  = WireDefault(AddressMap.PM_BEGIN + 0x0180000L.U) // base + 0x06000000.U
+  val base_cr  = WireDefault(AddressMap.PM_BEGIN + 0x01B0000L.U) // base + 0x06C00000.U
+  val base_l0  = WireDefault(AddressMap.PM_BEGIN + 0x01F8000L.U) // base + 0x07E00000.U
+  val base_l1  = WireDefault(AddressMap.PM_BEGIN + 0x01FF000L.U) // base + 0x07FC0000.U
+  val base_l2  = WireDefault(AddressMap.PM_BEGIN + 0x01FFE00L.U) // base + 0x07FF8000.U
+  val base_l3  = WireDefault(AddressMap.PM_BEGIN + 0x01FFFC0L.U) // base + 0x07FFF000.U  // on-die
 
   val PM_SIZE       = (96*1024*1024) >> 6  // 96MiB shift left by 6 bits (hex: 0x180000)
   val PM_SIZE_WIDTH = log2Up(PM_SIZE)      // 21 for 96 MiB
@@ -76,14 +77,16 @@ class Tree extends MultiIOModule {
   val nonceIdx        = Wire(Vec(5, UInt(3.W)))    // nonce index of L2, L1, L0, CR, Tag
 
   // tags
-  //val cwmacTagsCompleted = Reg(Bool()) // all tags have been computed already
-  val cwmacTagsCompleted = Wire(Bool()) // all tags have been computed already
-  val cwmacTagsEqual = Reg(Bool()) // all tags are expected or not
-  val verified       = Wire(Bool())
-  val uninit         = Wire(Bool())
+  val cwmacTagsCompleted = Wire(Bool())     // all tags have been computed already
+  //val cwmacTagsEqual = Reg(Bool())          // all tags are expected or not
+  val isVerified     = Reg(Vec(5, Bool()))  // The level is verified or not for L2, L1, L0, CR, Tag
+                                            //   initialized or (not initialized but tag is equal)
+  val isInitialized  = Reg(Vec(6, Bool()))  // The level is initialized by do_init or not
+  val doInit         = Reg(Bool())          // If true, set uninitCL instead of memory data
   val resp           = Reg(UInt(2.W))
-  uninit   := (cacheline(lv_cr).nonce(nonceIdx(lv_cr)) === n_init)
-  verified := (root =/= 0.U(56.W)) & (cwmacTagsEqual | uninit)
+  val verified       = Wire(Bool())
+  verified := (root =/= 0.U(56.W)) & isVerified.reduce(_ & _)
+
 
   // Tree states
   //  000         001           010         011           100
@@ -195,14 +198,19 @@ class Tree extends MultiIOModule {
     // Waiting backend response
 
     when (io.be.slave.valid) {
-      // Deq
+      // Deq & Parse
       val bits_t = io.be.slave.deq()
       val id_t   = bits_t.id
-      val data_t = bits_t.data
+      val data_t = Mux(doInit & (memLevel =/= lv_tag) & (memLevel =/= lv_mem), uninitCL, bits_t.data)
+      val cl_t   = data_t.asTypeOf(new CacheLine)
       cachelineValid(memLevel) := true.B
+      cacheline(memLevel)      := cl_t
+      isInitialized(memLevel)  := doInit
 
-      // Parse
-      cacheline(memLevel) := data_t.asTypeOf(new CacheLine)
+      // Check nonce is n_init or not
+      when (memLevel =/= lv_mem) {
+        doInit := doInit | (n_init === cl_t.nonce(nonceIdx(memLevel)))
+      }
 
       // state transition
       memLevel    := memOrder(memOrderIdx)
@@ -273,7 +281,8 @@ class Tree extends MultiIOModule {
       val expected_t = Mux(cwmacLevel === lv_tag,
         cacheline(lv_tag).nonce(nonceIdx(lv_tag)),
         cacheline(cwmacLevel).tag)
-      cwmacTagsEqual := cwmacTagsEqual & (tag_t === expected_t)
+      isVerified(cwmacLevel) := isInitialized(cwmacLevel) | (tag_t === expected_t)
+      //cwmacTagsEqual := cwmacTagsEqual & (tag_t === expected_t)
       printf_dbg("  Tree::CWMAC::Compare (level: %d)\n", cwmacLevel)
       printf_dbg("    Expected: %x, Computed: %x\n", expected_t, tag_t)
 
@@ -390,7 +399,9 @@ class Tree extends MultiIOModule {
       rwState   := mrw_t
 
       // try to verify tree
+      // If root is n_init, do initialize
       root       := io.root
+      doInit     := (io.root === n_init)
       treeState  := treeVerify
 
       /*
@@ -414,11 +425,15 @@ class Tree extends MultiIOModule {
       // Invalidate all cachelines
       cachelineValid.foreach(_ := false.B)
 
+      // Clear initialized flags
+      isInitialized.foreach(_ := false.B)
+
+
       /*
        * Invoke CWMAC state machine
        */
       cwmacLevel     := lv_l2   // Traverse order is always L2 -> L1 -> L0 -> CR -> Tag(Mem)
-      cwmacTagsEqual := true.B
+      //cwmacTagsEqual := true.B
       cwmacState     := cwmacVerifyIssue
 
       printf_dbg("  Tree::Tree accept\n")
