@@ -47,6 +47,7 @@ class Frontend(numTree: Int) extends MultiIOModule {
 
   // AXI AR/AW/W/B channel
   //val cpuSinkIdle :: cpuSinkWBusy :: cpuSinkIssue :: Nil = Enum(3)
+  //  00             01              10              11
   val cpuSinkIdle :: cpuSinkWBusy :: cpuSinkIssue :: cpuSinkB :: Nil = Enum(4)
   val cpuSinkState = RegInit(cpuSinkIdle)
   val cpuSinkIssueing = Wire(Bool())
@@ -96,12 +97,17 @@ class Frontend(numTree: Int) extends MultiIOModule {
   io.cpu.b.bits.resp := "b00".U(2.W)
   io.cpu.b.valid     := (cpuSinkState === cpuSinkB)
 
+  // Mux AR/AW channel
+  val axid_t   = Mux(io.cpu.aw.valid, io.cpu.aw.bits.id, io.cpu.ar.bits.id)
+  val axaddr_t = Mux(io.cpu.aw.valid, io.cpu.aw.bits.addr, io.cpu.ar.bits.addr)
+
   // manage root of Integrity Tree
   // rootL3 are must be initialized by n_init
-  val n_init          = "x1".U(56.W)                   // multiplicative unit
-  val rootL3          = Reg(Vec(numRoot, UInt(56.W)))
-  val nextIssueTree   = RegInit(0.U(numTreeWidth.W))   // index of Tree used by next issue
-  val nextReceiveTree = RegInit(0.U(numTreeWidth.W))   // index of Tree used by next receive
+  val n_init           = "x1".U(56.W)                   // multiplicative unit
+  /*val rootL3          = Reg(Vec(numRoot, UInt(56.W)))*/
+  val rootL3           = SyncReadMem(numRoot, UInt(56.W))
+  val nextIssueTree    = RegInit(0.U(numTreeWidth.W))   // index of Tree used by next issue
+  val nextReceiveTree  = RegInit(0.U(numTreeWidth.W))   // index of Tree used by next receive
 
   // RootIdx assigned to tree
   val invalidRootIdx = ((1 << numRootWidth) - 1).U(numRootWidth.W)  // indicate
@@ -109,15 +115,40 @@ class Frontend(numTree: Int) extends MultiIOModule {
 
   // Current selected root
   // PM Address: 0x1000000L.U(26.W) - 0x1180000L.U(26.W), so only check (25, 16)
-  val rootL3Idx   = axaddr(20, 12) & 0x1FF.U(9.W)
+  //val rootL3Idx   = axaddr(20, 12) & 0x1FF.U(9.W)
+  val rootL3Idx   = Reg(UInt(numRootWidth.W))
   val rootIdle    = Wire(Bool())
+  val rootInitIdx = RegInit(numRoot.U)
   val treeIdle    = Wire(Bool())
   val disableTree = RegInit(false.B)
   val toTree      = !disableTree & (0x100.U <= axaddr(25,16)) & (axaddr(25,16) < 0x118.U)
   val treeIssuable = Wire(Bool())
-  rootIdle := treeRootIdx.foldLeft(true.B)((acc, idx) => acc & (idx =/= rootL3Idx))
+  rootIdle := (rootInitIdx === numRoot.U) & treeRootIdx.foldLeft(true.B)((acc, idx) => acc & (idx =/= rootL3Idx))
   treeIdle := (treeRootIdx(nextIssueTree) === invalidRootIdx)
   treeIssuable := rootIdle & treeIdle & toTree
+
+  // rootL3 read
+  val rootL3Read  = (cpuSinkState === cpuSinkIdle) & (io.cpu.ar.valid | io.cpu.aw.valid)
+  val rootL3Idx_t = axaddr_t(20, 12) & 0x1FF.U(9.W)
+  val currentRoot = rootL3.read(rootL3Idx_t, rootL3Read)
+
+  // rootL3 writes
+  val rootL3WriteInit = (rootInitIdx =/= numRoot.U)
+  val nextIssueTreeM  = io.tree(nextIssueTree).master
+  val rootL3WriteInc  = nextIssueTreeM.valid & nextIssueTreeM.ready & (nextIssueTreeM.bits.rw === rwWrite)
+  val rootL3Write     = rootL3WriteInit | rootL3WriteInc
+  val rootL3WriteIdx  = Mux(rootL3WriteInit, rootInitIdx, rootL3Idx)
+  val rootL3WriteData = Mux(rootL3WriteInit, n_init, increment(currentRoot))
+
+  // Trigger rootL3 Initialization by writing some into 0xC7FFF000
+  when (io.cpu.aw.valid & (io.cpu.aw.bits.addr === "x11FFFC0".U(26.W))) {
+    rootInitIdx := 0.U(numRootWidth.W)
+  }
+  when (rootL3Write) {
+    rootL3.write(rootL3WriteIdx, rootL3WriteData)
+    rootInitIdx := rootInitIdx + rootL3WriteInit
+  }
+
 
   // static assign
   io.tree.foreach(_.master.bits.id   := axid)
@@ -128,12 +159,10 @@ class Frontend(numTree: Int) extends MultiIOModule {
   io.backend.master.bits.addr := axaddr
   io.backend.master.bits.data := wdata512
   io.backend.master.bits.rw   := axrw
-  io.root.foreach(_:= rootL3(rootL3Idx))
+  //io.root.foreach(_:= rootL3(rootL3Idx))
+  io.root.foreach(_:= currentRoot)
 
-  // Initialize rootL3 when CPU write some into 0xC7FFF000
-  when (axaddr === "x11FFFC0".U(26.W)) {
-    rootL3.foreach(_ := n_init)
-  }
+
 
   // Disable Integrity Tree when CPU write some into 0xC7FFF040
   //when (axaddr === "x11FFFC1".U(26.W)) {
@@ -168,13 +197,12 @@ class Frontend(numTree: Int) extends MultiIOModule {
   when (cpuSinkState === cpuSinkIdle) {
     // Write has higher priority than Read
 
-    // common
-    val axid_t   = Mux(io.cpu.aw.valid, io.cpu.aw.bits.id, io.cpu.ar.bits.id)
-    val axaddr_t = Mux(io.cpu.aw.valid, io.cpu.aw.bits.addr, io.cpu.ar.bits.addr)
-    axid     := axid_t
-    axaddr   := axaddr_t
-    axrw     := Mux(io.cpu.aw.valid, rwWrite, rwRead)
-    wdataIdx := 0.U(3.W)
+    // common register
+    axid      := axid_t
+    axaddr    := axaddr_t
+    axrw      := Mux(io.cpu.aw.valid, rwWrite, rwRead)
+    wdataIdx  := 0.U(3.W)
+    rootL3Idx := rootL3Idx_t
 
     when (io.cpu.aw.valid) {
       // accept AW channel, next todo: W channel
@@ -223,11 +251,8 @@ class Frontend(numTree: Int) extends MultiIOModule {
       cpuSinkState  := Mux(axrw === rwWrite, cpuSinkB, cpuSinkIdle)
       nextIssueTree := nextIssueTree + 1.U(numTreeWidth.W)
 
-      // Lock root
+      // Lock root / root initialization
       treeRootIdx(nextIssueTree) := rootL3Idx
-      when (axrw === rwWrite) {
-        rootL3(rootL3Idx)          := increment(rootL3(rootL3Idx))
-      }
 
       printf_dbg("  Frontend::cpuSinkIssue::Tree(%d)\n", nextIssueTree)
       printf_dbg("           id: %x\n", axid)
