@@ -3,13 +3,13 @@ This repository contains source files for MPE (Memory Protection Engine).
 All sources are open-sourced under Apache 2.0 license.
 
 **OpenMPE** is an open-source Memory Protection Engine (MPE) based on Intel SGX-style Integrity Tree (SIT).
-Details of SIT are explained in [Intel SGX whitepaper (Intel SGX Explained)](https://eprint.iacr.org/2016/086.pdf).
+Details of SIT are explained in the [Intel SGX whitepaper (Intel SGX Explained)](https://eprint.iacr.org/2016/086.pdf).
 
-As of v1.0.0, some of modules of the OpenMPE is designed/optimized for the modified Freedom SoC.
-If you want to OpenMPE "NOT AS-IS", some modifications may be required.
+As of v1.0.0, some modules are designed/optimized for the modified Freedom SoC.
+If you want to use OpenMPE "NOT AS-IS", some modifications may be required.
 
 # Requirements
-- This repository was created and tested under the following repository/versions.
+- This repository was written and tested under the following repository/versions.
 - Chisel
   - 2.12.10
 - Rocket-Chip
@@ -105,6 +105,19 @@ object AddressMap {
   val PM_END     = 0x1180000L.U(26.W) // 96-MiB
 }
 ```
+
+## Initialization
+- We omited automatic initialization of SIT roots
+  - This is to emulate on-chip non-volatile registers
+  - As long as an FPGA is configured by the same FPGA image, roots are preserved across system reboot
+- You can initialize Tree roots by writing some values into the `init` MMIO register
+  - It is mapped at `0xc7FFF040` (4-GiB memory is mapped from 0x80000000 in physical memory map)
+
+## Integrity Error Detection
+- When OpenMPE failes to verify the requested cacheline, it notifies the error by using AXI4 response signal
+  - `RRESP` or `BRESP`
+  - The bit#0 is raised
+- If you use TileLink <-> AXI4 conversion in the Rocket-chip respository, the bit is mapped to `corrupt` signal on TileLink
 
 # I/O
 - OpenMPE use the AXI4-Full for I/O protocol.
